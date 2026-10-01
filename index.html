@@ -1,0 +1,294 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>clef-flash · live decisions</title>
+<style>
+  :root {
+    --bg: #121212;
+    --panel: #181818;
+    --line: #2c2a28;
+    --fg: #f5f0ea;
+    --muted: #8a8580;
+    --dim: #5e5a56;
+    --orange: #f6821f;
+    --amber: #fbad41;
+    --mono: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    --sans: "Inter", -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: var(--sans); overflow: hidden; }
+  body {
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 80px 80px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 36px 48px 28px;
+    gap: 28px;
+  }
+
+  header { display: flex; align-items: flex-end; justify-content: space-between; }
+  .eyebrow { font-family: var(--mono); font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--orange); }
+  .eyebrow span { color: var(--muted); }
+  h1 { font-size: 46px; font-weight: 800; letter-spacing: -0.03em; margin-top: 8px; }
+  h1 em { font-style: normal; color: var(--orange); }
+
+  .stats { display: flex; gap: 14px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 18px; min-width: 150px; }
+  .stat .k { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+  .stat .v { font-family: var(--mono); font-size: 30px; font-weight: 600; margin-top: 4px; }
+  .stat .v small { font-size: 16px; color: var(--muted); margin-left: 4px; }
+  .stat.hot .v { color: var(--orange); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--dim); margin-right: 8px; vertical-align: middle; }
+  .dot.live { background: #3ddc84; box-shadow: 0 0 10px #3ddc84; }
+
+  main { display: grid; grid-template-columns: 1.35fr 1fr; gap: 28px; min-height: 0; }
+
+  .cam { position: relative; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: #000; min-height: 0; }
+  .cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+  .cam .pulse { position: absolute; inset: 0; border: 3px solid var(--orange); border-radius: 18px; opacity: 0; transition: opacity 120ms; pointer-events: none; }
+  .cam .pulse.on { opacity: 0.9; transition: opacity 0ms; }
+  .cam .tag { position: absolute; left: 18px; bottom: 18px; font-family: var(--mono); font-size: 14px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 8px; color: var(--muted); backdrop-filter: blur(6px); }
+
+  .cards { display: flex; flex-direction: column; gap: 16px; overflow-y: auto; min-height: 0; padding-right: 4px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+  .card .q { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .card .id { font-family: var(--mono); font-size: 15px; color: var(--muted); }
+  .card .type { font-family: var(--mono); font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; }
+  .card .answer { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; margin: 6px 0 12px; }
+  .card .answer.yes { color: var(--orange); }
+
+  .opt { display: grid; grid-template-columns: 130px 1fr 64px; align-items: center; gap: 12px; margin-top: 7px; font-family: var(--mono); font-size: 14px; color: var(--muted); }
+  .opt .bar { height: 12px; background: #222; border-radius: 6px; overflow: hidden; }
+  .opt .fill { height: 100%; width: 0; background: #4a4642; border-radius: 6px; transition: width 220ms ease-out, background 220ms; }
+  .opt.top { color: var(--fg); }
+  .opt.top .fill { background: linear-gradient(90deg, var(--orange), var(--amber)); box-shadow: 0 0 14px rgba(246,130,31,0.55); }
+  .opt .pct { text-align: right; }
+
+  footer { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 14px; color: var(--dim); }
+  footer b { color: var(--muted); font-weight: 500; }
+  footer kbd { border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted); }
+
+  .editor { position: fixed; inset: 60px; background: var(--panel); border: 1px solid var(--orange); border-radius: 16px; padding: 20px; display: none; flex-direction: column; gap: 12px; z-index: 10; box-shadow: 0 30px 80px rgba(0,0,0,0.6); }
+  .editor.open { display: flex; }
+  .editor textarea { flex: 1; background: #0f0f0f; color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 16px; font-family: var(--mono); font-size: 15px; line-height: 1.5; resize: none; }
+  .editor .row { display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 14px; color: var(--muted); }
+  .editor button { background: var(--orange); color: #141414; border: 0; border-radius: 8px; padding: 10px 18px; font-family: var(--mono); font-weight: 700; font-size: 14px; cursor: pointer; }
+  .error { color: #ff6b6b; }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="eyebrow">clef-flash <span>· Cloudflare's open decision model · running locally</span></div>
+      <h1>webcam → <em>typed decisions</em></h1>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k"><span class="dot" id="dot"></span>status</div><div class="v" id="status" style="font-size:20px; margin-top:10px">starting</div></div>
+      <div class="stat hot"><div class="k">model latency</div><div class="v"><span id="lat">–</span><small>ms</small></div></div>
+      <div class="stat"><div class="k">decisions / sec</div><div class="v" id="dps">–</div></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="cam">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="pulse" id="pulse"></div>
+      <div class="tag" id="tag">no text generation · one forward pass · on-device</div>
+    </div>
+    <div class="cards" id="cards"></div>
+  </main>
+
+  <footer>
+    <div><b id="hardware">loading model…</b> · same request body as <b>@cf/cloudflare/clef</b> on Workers AI</div>
+    <div><kbd>E</kbd> edit questions &nbsp; <kbd>space</kbd> pause</div>
+  </footer>
+
+  <div class="editor" id="editor">
+    <div class="row"><span>questions (Jev / SystemOne schema) · change them live, no retraining</span><span id="err" class="error"></span></div>
+    <textarea id="schema" spellcheck="false"></textarea>
+    <div class="row"><span><kbd>⌘</kbd>+<kbd>enter</kbd> apply · <kbd>esc</kbd> close</span><button id="apply">apply</button></div>
+  </div>
+
+  <canvas id="canvas" style="display:none"></canvas>
+
+<script>
+// Short instructions and null descriptions keep the prompt small: latency scales with tokens.
+const DEFAULT_QUESTIONS = {
+  gesture: {
+    type: "choice",
+    instructions: "Hand gesture?",
+    criteria: { thumbs_up: null, peace_sign: null, waving: null, pointing: null, none: null }
+  },
+  vibe: {
+    type: "choice",
+    instructions: "What is the person doing?",
+    criteria: { locked_in: "working at the screen", talking: null, on_phone: null, celebrating: null, away: "no person visible" }
+  },
+  holding_drink: {
+    type: "noul",
+    instructions: "Holding a cup or drink?",
+    criteria: { true: "yes", false: "no" }
+  }
+};
+
+const $ = id => document.getElementById(id);
+const TAG = "no text generation · one forward pass · on-device";
+const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+let questions = JSON.parse(localStorage.getItem("clef-questions") || "null") || DEFAULT_QUESTIONS;
+let paused = false;
+const recent = [];
+
+$("schema").value = JSON.stringify(questions, null, 2);
+
+const pretty = s => String(s).replace(/_/g, " ");
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function optionsOf(q) {
+  if (q.type === "noul") return [["true", "yes"], ["false", "no"]];
+  if (q.type === "choice") return Object.keys(q.criteria || {}).map(o => [o, pretty(o)]);
+  return (q.criteria || []).map((label, i) => [String(i), String(label)]);
+}
+
+function renderCards() {
+  const cards = $("cards");
+  cards.replaceChildren();
+  for (const [id, q] of Object.entries(questions)) {
+    const card = el("div", "card");
+    card.dataset.id = id;
+    const head = el("div", "q");
+    head.append(el("span", "id", id), el("span", "type", q.type));
+    card.append(head, el("div", "answer", "–"));
+    for (const [option, label] of optionsOf(q)) {
+      const row = el("div", "opt");
+      row.dataset.opt = option;
+      const bar = el("div", "bar");
+      bar.append(el("div", "fill"));
+      row.append(el("span", "", label), bar, el("span", "pct", "–"));
+      card.append(row);
+    }
+    cards.append(card);
+  }
+}
+
+function update(answers) {
+  for (const [id, a] of Object.entries(answers)) {
+    const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+    if (!card) continue;
+    const q = questions[id];
+    let probs, top, answerText, yes = false;
+    if (a.type === "noul") {
+      probs = { true: a.noul, false: 1 - a.noul };
+      top = a.noul >= 0.5 ? "true" : "false";
+      yes = top === "true";
+      answerText = yes ? "yes" : "no";
+    } else if (a.type === "choice") {
+      probs = a.probabilities; top = a.choice; answerText = pretty(a.choice); yes = true;
+    } else {
+      probs = a.probabilities;
+      top = Object.entries(probs).sort((x, y) => y[1] - x[1])[0][0];
+      answerText = q.criteria[Number(top)]; yes = true;
+    }
+    const answerEl = card.querySelector(".answer");
+    answerEl.textContent = answerText;
+    answerEl.classList.toggle("yes", yes);
+    card.querySelectorAll(".opt").forEach(row => {
+      const p = probs[row.dataset.opt] ?? 0;
+      row.querySelector(".fill").style.width = (p * 100).toFixed(1) + "%";
+      row.querySelector(".pct").textContent = (p * 100).toFixed(p > 0.995 || p < 0.005 ? 1 : 0) + "%";
+      row.classList.toggle("top", row.dataset.opt === top);
+    });
+  }
+}
+
+function grab() {
+  const w = 448, h = Math.round(w * video.videoHeight / video.videoWidth);
+  canvas.width = w; canvas.height = h;
+  ctx.save(); ctx.translate(w, 0); ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, w, h);
+  ctx.restore();
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+function setStatus(text, live) {
+  $("status").textContent = text;
+  $("dot").classList.toggle("live", !!live);
+}
+
+async function loop() {
+  while (true) {
+    if (paused || !video.videoWidth) { await new Promise(r => setTimeout(r, 100)); continue; }
+    try {
+      const res = await fetch("/decide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: grab(), questions })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      update(data.answers);
+      $("lat").textContent = Math.round(data.latency_ms);
+      $("hardware").textContent = data.hardware;
+      const now = performance.now();
+      recent.push(now);
+      while (now - recent[0] > 3000) recent.shift();
+      if (recent.length > 1) $("dps").textContent = ((recent.length - 1) / ((now - recent[0]) / 1000)).toFixed(1);
+      $("pulse").classList.add("on");
+      requestAnimationFrame(() => $("pulse").classList.remove("on"));
+      $("tag").textContent = TAG;
+      setStatus("live", true);
+    } catch (e) {
+      setStatus("error", false);
+      $("tag").textContent = `${e.message} · press E to fix, shift+R to reset`;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
+
+function applySchema() {
+  try {
+    const next = JSON.parse($("schema").value);
+    if (!next || typeof next !== "object" || !Object.keys(next).length) throw new Error("need at least one question");
+    questions = next;
+    localStorage.setItem("clef-questions", JSON.stringify(questions));
+    $("err").textContent = "";
+    $("editor").classList.remove("open");
+    renderCards();
+  } catch (e) {
+    $("err").textContent = e.message;
+  }
+}
+
+document.addEventListener("keydown", e => {
+  const editing = $("editor").classList.contains("open");
+  if (editing) {
+    if (e.key === "Escape") $("editor").classList.remove("open");
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) applySchema();
+    return;
+  }
+  if (e.key.toLowerCase() === "e" && !e.metaKey && !e.ctrlKey) { $("editor").classList.add("open"); $("schema").focus(); e.preventDefault(); }
+  if (e.key === " ") { paused = !paused; setStatus(paused ? "paused" : "live", !paused); e.preventDefault(); }
+  if (e.key.toLowerCase() === "r" && e.shiftKey) {
+    localStorage.removeItem("clef-questions");
+    questions = DEFAULT_QUESTIONS;
+    $("schema").value = JSON.stringify(questions, null, 2);
+    renderCards();
+  }
+});
+$("apply").onclick = applySchema;
+
+renderCards();
+navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+  .then(stream => { video.srcObject = stream; setStatus("warming", false); loop(); })
+  .catch(e => setStatus("no camera", false));
+</script>
+</body>
+</html>

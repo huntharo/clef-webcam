@@ -1,0 +1,16 @@
+[project]
+name = "clef-webcam"
+version = "0.1.0"
+description = "Run Cloudflare's clef-flash decision model locally on your webcam"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.15.0",
+    "fastapi>=0.142.2",
+    "huggingface-hub[hf-xet]>=1.33.0",
+    "pillow>=12.3.0",
+    "torch>=2.11",
+    "torchvision>=0.29.1",
+    "transformers>=5.10.2",
+    "uvicorn[standard]>=0.54.0",
+]
