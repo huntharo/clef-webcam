@@ -108,8 +108,8 @@
   <footer>
     <div><b id="hardware">loading model…</b> · System One API</div>
     <div class="controls">
-      <label class="motion-mode"><input id="motion" type="checkbox">Two-frame motion</label>
-      <span id="mode-hint">One current frame</span>
+      <label class="motion-mode"><input id="motion" type="checkbox" checked>Two-frame motion</label>
+      <span id="mode-hint">Earlier + later · uncheck for one frame</span>
       <span><kbd>E</kbd> edit &nbsp; <kbd>space</kbd> pause</span>
     </div>
   </footer>
@@ -123,7 +123,7 @@
   <canvas id="canvas" style="display:none"></canvas>
 
 <script type="module">
-import { CaptureState, SYSTEMONE_URL, inferenceTiming } from "/camera.mjs";
+import { CaptureState, SYSTEMONE_URL, captureFrame, motionPreference, inferenceTiming } from "/camera.mjs";
 // Short instructions and null descriptions keep the prompt small: latency scales with tokens.
 const DEFAULT_QUESTIONS = {
   gesture: {
@@ -149,12 +149,11 @@ const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
 let questions = JSON.parse(localStorage.getItem("clef-questions") || "null") || DEFAULT_QUESTIONS;
 let paused = false;
 const recent = [];
-const capture = new CaptureState();
-$("motion").checked = localStorage.getItem("clef-motion") === "true";
-capture.setMotion($("motion").checked);
+const capture = new CaptureState(motionPreference(localStorage.getItem("clef-motion")));
+$("motion").checked = capture.motion;
 
 function updateMode() {
-  $("mode-hint").textContent = capture.motion ? "Earlier + later · motion cues" : "One current frame";
+  $("mode-hint").textContent = capture.motion ? "Earlier + later · uncheck for one frame" : "One current frame";
   recent.length = 0;
   $("dps").textContent = "–";
 }
@@ -234,12 +233,14 @@ function update(answers) {
 }
 
 function grab() {
-  const w = 448, h = Math.round(w * video.videoHeight / video.videoWidth);
-  canvas.width = w; canvas.height = h;
-  ctx.save(); ctx.translate(w, 0); ctx.scale(-1, 1);
-  ctx.drawImage(video, 0, 0, w, h);
-  ctx.restore();
-  return canvas.toDataURL("image/jpeg", 0.85);
+  return captureFrame(video, () => {
+    const w = 448, h = Math.round(w * video.videoHeight / video.videoWidth);
+    canvas.width = w; canvas.height = h;
+    ctx.save(); ctx.translate(w, 0); ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, w, h);
+    ctx.restore();
+    return canvas.toDataURL("image/jpeg", 0.85);
+  });
 }
 
 function setStatus(text, live) {
@@ -254,7 +255,10 @@ async function loop() {
     try {
       const wait = capture.waitMs(performance.now());
       if (wait) { setStatus("sampling", false); await new Promise(r => setTimeout(r, wait)); continue; }
-      const body = capture.prepare({ data: grab(), at: performance.now() }, questions);
+      const frame = await grab();
+      if (generation !== capture.generation || paused) continue;
+      if (!frame) { capture.reset(); setStatus("sampling", false); continue; }
+      const body = capture.prepare(frame, questions);
       if (!body) { setStatus("sampling", false); await new Promise(r => setTimeout(r, 250)); continue; }
       const started = performance.now();
       const res = await fetch(SYSTEMONE_URL, {

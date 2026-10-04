@@ -16,11 +16,15 @@ uv run uvicorn server:app --port 8787
 
 Open http://localhost:8787 and allow camera access.
 
-The camera page sends its decisions to `/v1/systemone`. Enable **Two-frame motion**
-to compare an earlier and later frame, with a prompt that looks for movement
-such as mouth/lip changes consistent with talking. It uses a rolling pair spaced
-at least 250 ms apart. Pausing or changing mode clears the pair; edited questions
-remain intact. The mode choice is remembered locally.
+The camera page sends its decisions to `/v1/systemone`. **Two-frame motion** is
+enabled by default to compare an earlier and later frame, with a prompt that looks
+for movement such as mouth/lip changes consistent with talking. It uses a rolling
+pair spaced at least 250 ms apart. Uncheck it to send one current frame. The mode choice is
+remembered locally, including an existing single-frame opt-out; edited questions
+remain intact. Pausing, schema edits, mode changes, and errors clear the pair.
+Frames older than two seconds are replaced, and a stalled camera cannot supply
+both frames of a clip. Capture waits for newly presented video frames, and the
+frame rate reflects their source timestamps.
 
 ## System One API
 
@@ -85,10 +89,13 @@ must match after resizing. `fps` is their effective sampling rate (4 means
 processor receives those selected frames without resampling, plus metadata for
 their timestamps. Encoded video files and longer clips are not accepted.
 
-The model groups two frames into one temporal patch. At matching resolution,
-this can use the same visual token budget as one image; timestamp and prompt
-text, frame capture, and transfer still add work. Compare model latency and
+The model's image processor duplicates a single image across the two temporal
+slices of a patch. Sending two chronological frames as one video supplies both
+slices with actual observations instead. At matching resolution, this can use
+the same visual token budget as one image; timestamp and prompt text, frame
+capture, and transfer still add work. Compare model latency and
 `usage.input_tokens` rather than assuming every two-frame request is free.
+This supplies motion information; it does not establish talking-detection accuracy.
 
 Keep the server bound to loopback; it has no authentication.
 
