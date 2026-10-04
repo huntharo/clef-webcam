@@ -5,7 +5,8 @@ import io
 import json
 from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -35,12 +36,17 @@ NamedQuestion = Annotated[NoulQuestion | ChoiceQuestion | ScoreQuestion, Field(d
 InlineImage = Annotated[str, Field(min_length=1, max_length=8 * 1024 * 1024)]
 
 
+class TwoFrameVideo(BaseModel):
+    frames: list[InlineImage] = Field(min_length=2, max_length=2)
+    fps: float = Field(default=2.0, gt=0, le=120, allow_inf_nan=False, strict=True)
+
+
 class SystemOneRequest(BaseModel):
     model: Literal["clef-flash"]
     state: Description
     questions: dict[str, NamedQuestion] = Field(min_length=1, max_length=64)
     images: list[InlineImage] = Field(default_factory=list, max_length=4)
-    videos: list[Any] = Field(default_factory=list)
+    videos: list[TwoFrameVideo] = Field(default_factory=list, max_length=1)
 
 
 def decode_image(encoded: str, max_side: int) -> Image.Image:
@@ -55,19 +61,31 @@ def decode_image(encoded: str, max_side: int) -> Image.Image:
 
 def add_systemone_routes(app: FastAPI, clef, max_side: int):
     @app.post("/v1/systemone")
-    def systemone(body: SystemOneRequest):
+    def systemone(body: SystemOneRequest, response: Response):
         try:
-            if body.videos:
-                raise ValueError("this local endpoint supports text/JSON and images, not videos")
             # Preserve omitted fields and explicit nulls for the upstream helper.
             record = body.model_dump(exclude_unset=True)
             json.dumps(record, allow_nan=False)
             if body.images:
                 record["images"] = [decode_image(image, max_side) for image in body.images]
-            response, _ = clef.decide(record)
+            if body.videos:
+                clip = body.videos[0]
+                frames = [decode_image(frame, max_side) for frame in clip.frames]
+                if frames[0].size != frames[1].size:
+                    raise ValueError("video frames must have matching dimensions after resizing")
+                record["videos"] = [np.stack([np.asarray(frame) for frame in frames])]
+                # These are already selected chronological frames. Do not resample
+                # or duplicate them, and provide their real spacing for timestamps.
+                record["media_kwargs"] = {"do_sample_frames": False, "cap_pixels_per_frame": True,
+                    "video_metadata": [{"total_num_frames": 2, "fps": clip.fps,
+                                        "frames_indices": [0, 1]}]}
+            result, latency_ms = clef.decide(record)
         except (ValueError, KeyError, TypeError, AttributeError, OSError, Image.DecompressionBombError) as error:
             raise HTTPException(422, detail=f"invalid System One request: {error}") from error
-        return response
+        response.headers["Server-Timing"] = f"inference;dur={latency_ms:.1f}"
+        response.headers["X-Clef-Hardware"] = clef.hardware
+        response.headers["X-Clef-Device"] = clef.device
+        return result
 
     @app.get("/v1/models")
     def models():

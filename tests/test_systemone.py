@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import numpy as np
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -46,9 +47,9 @@ class SystemOneTests(unittest.TestCase):
         self.client = TestClient(self.server.app)
         self.addCleanup(self.client.close)
 
-    def image(self, image_format="PNG"):
+    def image(self, image_format="PNG", color="orange", size=(640, 480)):
         output = io.BytesIO()
-        Image.new("RGB", (640, 480), "orange").save(output, format=image_format)
+        Image.new("RGB", size, color).save(output, format=image_format)
         return base64.b64encode(output.getvalue()).decode()
 
     def test_text_json_object_and_array_states_return_the_helper_response(self):
@@ -58,6 +59,9 @@ class SystemOneTests(unittest.TestCase):
                 response = self.client.post("/v1/systemone", json=body)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json(), self.response)
+                self.assertEqual(response.headers["Server-Timing"], "inference;dur=12.0")
+                self.assertEqual(response.headers["X-Clef-Hardware"], "fixture")
+                self.assertEqual(response.headers["X-Clef-Device"], "fixture")
                 self.clef.decide.assert_called_with(body)
 
     def test_omitted_and_null_instructions_preserve_the_wire_request(self):
@@ -107,6 +111,40 @@ class SystemOneTests(unittest.TestCase):
             response = self.client.post("/v1/systemone", json=dict(self.body, images=["eA=="]))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.clef.decide.call_args.args[0]["images"][0].size, (336, 252))
+
+    def test_two_frames_become_one_chronological_video_with_real_timestamps(self):
+        body = dict(self.body, videos=[{"frames": [self.image(), self.image(color="blue")], "fps": 4.0}])
+        response = self.client.post("/v1/systemone", json=body)
+        self.assertEqual(response.status_code, 200)
+        record = self.clef.decide.call_args.args[0]
+        self.assertNotIn("images", record)
+        self.assertEqual(len(record["videos"]), 1)
+        video = record["videos"][0]
+        self.assertEqual(video.shape, (2, 252, 336, 3))
+        self.assertEqual(video.dtype, np.uint8)
+        self.assertEqual(video[0, 0, 0].tolist(), [255, 165, 0])
+        self.assertEqual(video[1, 0, 0].tolist(), [0, 0, 255])
+        self.assertEqual(record["media_kwargs"], {"do_sample_frames": False, "cap_pixels_per_frame": True,
+            "video_metadata": [{"total_num_frames": 2, "fps": 4.0, "frames_indices": [0, 1]}]})
+
+    def test_invalid_video_clips_are_rejected_before_inference(self):
+        frames = [self.image(), self.image(color="blue")]
+        clips = [["not-a-clip"], [{"frames": frames[:1]}], [{"frames": frames + frames[:1]}],
+                 [{"frames": frames}, {"frames": frames}],
+                 [{"frames": frames, "fps": 0}], [{"frames": frames, "fps": 121}],
+                 [{"frames": frames, "fps": True}], [{"frames": ["invalid", "invalid"]}],
+                 [{"frames": [frames[0], self.image(size=(480, 640))]}]]
+        for clip in clips:
+            with self.subTest(clip=clip):
+                self.assertEqual(self.client.post("/v1/systemone", json=dict(self.body, videos=clip)).status_code, 422)
+        self.clef.decide.assert_not_called()
+
+    def test_camera_module_is_served_as_javascript(self):
+        response = self.client.get("/camera.mjs")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("javascript", response.headers["content-type"])
+        self.assertIn('"/v1/systemone"', response.text)
+        self.clef.decide.assert_not_called()
 
     def test_invalid_requests_return_422_before_inference(self):
         bodies = [[], {}, dict(self.body, model="jev-latest"), dict(self.body, state=None),
