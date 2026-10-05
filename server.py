@@ -49,8 +49,3 @@ def decide(body: DecideRequest):
 @app.get("/")
 def index():
     return FileResponse(Path(__file__).parent / "index.html")
-
-
-@app.get("/camera.mjs")
-def camera_module():
-    return FileResponse(Path(__file__).parent / "camera.mjs", media_type="text/javascript")
