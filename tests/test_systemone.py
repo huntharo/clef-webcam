@@ -172,6 +172,41 @@ class SystemOneTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.clef.decide.assert_not_called()
 
+    def test_non_finite_frame_rates_return_serializable_validation_errors(self):
+        body = dict(self.body, videos=[{"frames": [self.image(), self.image(color="blue")],
+                                      "fps": "NON_FINITE"}])
+        with TestClient(self.server.app, raise_server_exceptions=False) as client:
+            for literal, reported in (("1e309", "inf"), ("-1e309", "-inf"), ("NaN", "nan"),
+                                      ("Infinity", "inf"), ("-Infinity", "-inf")):
+                with self.subTest(fps=literal):
+                    content = json.dumps(body).replace('"NON_FINITE"', literal)
+                    response = client.post("/v1/systemone", content=content,
+                                           headers={"Content-Type": "application/json"})
+                    self.assertEqual(response.status_code, 422)
+                    error = response.json()["detail"][0]
+                    self.assertEqual(error["loc"], ["body", "videos", 0, "fps"])
+                    self.assertEqual(error["type"], "finite_number")
+                    self.assertEqual(error["input"], reported)
+                    json.dumps(response.json(), allow_nan=False)
+        self.clef.decide.assert_not_called()
+
+    def test_nested_non_finite_validation_inputs_return_serializable_errors(self):
+        nested = {"invalid": [float("nan"), {"value": float("inf")}], "finite": 1.5}
+        bodies = [[nested], dict(self.body, questions={"invalid": {"type": "unknown", **nested}})]
+        with TestClient(self.server.app, raise_server_exceptions=False) as client:
+            for body in bodies:
+                with self.subTest(body=body):
+                    response = client.post("/v1/systemone", content=json.dumps(body),
+                                           headers={"Content-Type": "application/json"})
+                    self.assertEqual(response.status_code, 422)
+                    json.dumps(response.json(), allow_nan=False)
+                    reported = response.json()["detail"][0]["input"]
+                    if isinstance(reported, list):
+                        reported = reported[0]
+                    self.assertEqual(reported["invalid"], ["nan", {"value": "inf"}])
+                    self.assertEqual(reported["finite"], 1.5)
+        self.clef.decide.assert_not_called()
+
     def test_model_validation_errors_return_422(self):
         self.clef.decide.side_effect = ValueError("schema does not fit")
         self.assertEqual(self.client.post("/v1/systemone", json=self.body).status_code, 422)

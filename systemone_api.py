@@ -3,9 +3,13 @@
 import base64
 import io
 import json
+from math import isfinite
 from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -60,6 +64,15 @@ def decode_image(encoded: str, max_side: int) -> Image.Image:
 
 
 def add_systemone_routes(app: FastAPI, clef, max_side: int):
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        # Rejected inputs can contain NaN/Infinity, which JSONResponse cannot
+        # serialize. Preserve the validation details with those values as text.
+        detail = jsonable_encoder(error.errors(), custom_encoder={
+            float: lambda value: value if isfinite(value) else str(value)
+        })
+        return JSONResponse(status_code=422, content={"detail": detail})
+
     @app.post("/v1/systemone")
     def systemone(body: SystemOneRequest, response: Response):
         try:
