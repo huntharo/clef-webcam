@@ -16,7 +16,15 @@ uv run uvicorn server:app --port 8787
 
 Open http://localhost:8787 and allow camera access.
 
-The camera page sends one current image per decision to `/v1/systemone`.
+The camera page sends its decisions to `/v1/systemone`. **Two-frame motion** is
+enabled by default to compare an earlier and later frame, with a prompt that looks
+for movement such as mouth/lip changes consistent with talking. It uses a rolling
+pair spaced at least 250 ms apart. Uncheck it to send one current frame. The mode choice is
+remembered locally, including an existing single-frame opt-out; edited questions
+remain intact. Pausing, schema edits, mode changes, and errors clear the pair.
+Frames older than two seconds are replaced, and a stalled camera cannot supply
+both frames of a clip. Capture waits for newly presented video frames, and the
+frame rate reflects their source timestamps.
 
 ## System One API
 
@@ -63,6 +71,31 @@ For image questions, add `images` with up to four inline base64 JPEG, PNG, or
 WebP images (raw base64 or data URLs, at most 8 MiB encoded per image). Images
 are resized to `CLEF_MAX_SIDE`, like webcam frames. Image URLs and file paths
 are not fetched.
+
+The local video extension accepts one two-frame clip:
+
+```json
+{
+  "model": "clef-flash",
+  "state": "Compare two chronological frames for visible talking motion.",
+  "questions": {"talking": {"type": "noul"}},
+  "videos": [{"frames": ["<earlier frame base64>", "<later frame base64>"], "fps": 4.0}]
+}
+```
+
+Use the same inline image formats and limits for each frame. Frame dimensions
+must match after resizing. `fps` is their effective sampling rate (4 means
+250 ms apart), defaults to 2, and must be greater than 0 and at most 120. The
+processor receives those selected frames without resampling, plus metadata for
+their timestamps. Encoded video files and longer clips are not accepted.
+
+The model's image processor duplicates a single image across the two temporal
+slices of a patch. Sending two chronological frames as one video supplies both
+slices with actual observations instead. At matching resolution, this can use
+the same visual token budget as one image; timestamp and prompt text, frame
+capture, and transfer still add work. Compare model latency and
+`usage.input_tokens` rather than assuming every two-frame request is free.
+This supplies motion information; it does not establish talking-detection accuracy.
 
 Keep the server bound to loopback; it has no authentication.
 
@@ -112,6 +145,7 @@ On a Mac, Qwen3.5's linear-attention layers fall back to a slow reference implem
 | `clef.py` | Model loading and timing |
 | `mps_kernels.py` | Faster linear attention for Apple Silicon |
 | `systemone_api.py` | System One HTTP schema, image decoding, and model discovery |
+| `camera.mjs` | Single-frame and two-frame capture state |
 | `bench.py` | Speed and accuracy check |
 
 `joint_schema_model.py` (Clef's reference inference code) is downloaded with the model.
@@ -120,9 +154,11 @@ On a Mac, Qwen3.5's linear-attention layers fall back to a slow reference implem
 
 ```sh
 uv run python -m unittest discover -s tests
+node --test tests/test_camera.mjs
 ```
 
-HTTP tests use a fake model and do not download or load weights.
+HTTP tests use a fake model and do not download or load weights. The capture-state
+tests use Node's built-in test runner.
 
 ## Settings
 

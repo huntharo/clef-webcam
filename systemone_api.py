@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -39,11 +40,17 @@ NamedQuestion = Annotated[NoulQuestion | ChoiceQuestion | ScoreQuestion, Field(d
 InlineImage = Annotated[str, Field(min_length=1, max_length=8 * 1024 * 1024)]
 
 
+class TwoFrameVideo(BaseModel):
+    frames: list[InlineImage] = Field(min_length=2, max_length=2)
+    fps: float = Field(default=2.0, gt=0, le=120, allow_inf_nan=False, strict=True)
+
+
 class SystemOneRequest(BaseModel):
     model: Literal["clef-flash"]
     state: Description
     questions: dict[str, NamedQuestion] = Field(min_length=1, max_length=64)
     images: list[InlineImage] = Field(default_factory=list, max_length=4)
+    videos: list[TwoFrameVideo] = Field(default_factory=list, max_length=1)
 
 
 def decode_image(encoded: str, max_side: int) -> Image.Image:
@@ -74,6 +81,17 @@ def add_systemone_routes(app: FastAPI, clef, max_side: int):
             json.dumps(record, allow_nan=False)
             if body.images:
                 record["images"] = [decode_image(image, max_side) for image in body.images]
+            if body.videos:
+                clip = body.videos[0]
+                frames = [decode_image(frame, max_side) for frame in clip.frames]
+                if frames[0].size != frames[1].size:
+                    raise ValueError("video frames must have matching dimensions after resizing")
+                record["videos"] = [np.stack([np.asarray(frame) for frame in frames])]
+                # These are already selected chronological frames. Do not resample
+                # or duplicate them, and provide their real spacing for timestamps.
+                record["media_kwargs"] = {"do_sample_frames": False, "cap_pixels_per_frame": True,
+                    "video_metadata": [{"total_num_frames": 2, "fps": clip.fps,
+                                        "frames_indices": [0, 1]}]}
             result, latency_ms = clef.decide(record)
         except (ValueError, KeyError, TypeError, AttributeError, OSError, Image.DecompressionBombError) as error:
             raise HTTPException(422, detail=f"invalid System One request: {error}") from error
