@@ -26,6 +26,51 @@ Frames older than two seconds are replaced, and a stalled camera cannot supply
 both frames of a clip. Capture waits for newly presented video frames, and the
 frame rate reflects their source timestamps.
 
+## Experimental 2×2 history sheet
+
+Select **2×2 history (experimental)**, or open `http://127.0.0.1:8787/?mode=history`.
+The existing single-frame and two-frame modes remain available.
+
+The request contains two independent images: the current full camera photo, and
+this 336×336 diagnostic sheet:
+
+| Top left | Top right |
+| --- | --- |
+| Approximately −300 ms | Approximately −200 ms |
+| **Bottom left: approximately −100 ms** | **Bottom right: accumulated motion map** |
+
+The labels and request state contain actual source-frame offsets. Camera frames
+are buffered independently of inference, using `requestVideoFrameCallback` source
+timestamps. The sampler selects distinct frames within 45 ms of each target;
+missing history, a source gap over 150 ms, or a current frame older than 150 ms
+prevents a request. The buffer retains at most 650 ms and 64 frames, at a maximum
+640-pixel side. Pausing, schema changes, crop changes, mode changes, and errors
+invalidate history and old responses.
+
+The motion map takes the maximum mean absolute RGB change between adjacent
+available source frames in the displayed window. It uses a fixed 6/255 noise
+floor and 3× gain, before JPEG encoding. Intermediate movement that returns to
+its original position can appear even when selected history pictures look alike.
+It indicates change, not direction or speech: camera movement, lighting, sensor
+noise and other motion can also appear.
+
+Select **Crop history…** and drag over the face or mouth in the mirrored preview.
+The same crop applies to every history tile and the motion map; **Full frame**
+clears it. Images retain their aspect ratio with letterboxing. Open **History
+sheet preview** to see exactly what the second image contains. Crop and mode
+preferences stay in localStorage, and saved questions are preserved.
+
+History mode adds a separate `speaking_motion` question with speaking,
+no-speaking-motion and uncertain choices, unless that question already exists or the schema already has 64 questions.
+The added question is not written into saved schemas or used in other modes.
+The layout prompt requires visual lip/jaw articulation and explains that the
+motion map is not another scene. This is an experiment, not a validated speech
+activity detector. Evaluate both talking and silent clips, including head motion.
+Two independent images have a different visual token budget from the two-frame
+video path; compare input tokens and measured latency rather than assuming it is free.
+Continuous buffering adds browser canvas readback work compared with request-driven capture.
+No extra backend route, dependency, model load, or microphone is required.
+
 ## System One API
 
 The same server exposes `POST /v1/systemone` and `GET /v1/models` for
@@ -154,11 +199,27 @@ On a Mac, Qwen3.5's linear-attention layers fall back to a slow reference implem
 
 ```sh
 uv run python -m unittest discover -s tests
-node --test tests/test_camera.mjs
+node --test tests/test_*.mjs
 ```
 
 HTTP tests use a fake model and do not download or load weights. The capture-state
 tests use Node's built-in test runner.
+
+### Browser history fixture (optional)
+
+```sh
+npm install --no-save --package-lock=false playwright
+npx playwright install chromium
+node tests/browser_history.mjs
+```
+
+Set `CHROMIUM_EXECUTABLE_PATH` to use an installed Chromium browser instead.
+The fixture supplies a synthetic canvas camera and mock decisions; it does not
+open the real camera or load the model. It checks panel dimensions, real source
+offsets, transient motion, a static motion map, slow inference, cropping,
+persistence, both legacy modes, errors, source freezes, pause, and serial requests.
+Screenshots and a generated request stay in ignored `.history-test-artifacts/`.
+Set `HISTORY_TEST_ARTIFACTS` to choose another private artifact directory.
 
 ## Settings
 
