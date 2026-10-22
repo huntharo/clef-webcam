@@ -1,7 +1,7 @@
 // Capture helpers shared by the browser loop and its tests.
 export const SYSTEMONE_URL = "/v1/systemone";
 export const SINGLE_STATE = "A live webcam frame from a laptop.";
-export const MOTION_STATE = "Two chronological webcam frames, earlier then later. Look for motion, especially mouth/lip changes consistent with talking.";
+export const MOTION_STATE = "Two chronological webcam photos, earlier then later. Compare visible changes for the requested decisions.";
 
 // An unset preference uses two frames; preserve the stored single-frame opt-out.
 export const motionPreference = stored => stored !== "false";
@@ -61,8 +61,9 @@ export class CaptureState {
     const gap = frame.mediaTime - earlier.mediaTime;
     if (gap < 250 || frame.at - earlier.at < 250) return null;
     this.previous = frame;
-    return { model: "clef-flash", state: MOTION_STATE, questions,
-             videos: [{ frames: [earlier.data, frame.data], fps: 1000 / gap }] };
+    return { model: "clef-flash",
+             state: `${MOTION_STATE} Image 1: -${Math.round(gap)} ms; image 2: 0 ms.`,
+             questions, images: [earlier.data, frame.data] };
   }
 }
 

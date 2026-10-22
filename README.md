@@ -17,14 +17,14 @@ uv run uvicorn server:app --port 8787
 Open http://localhost:8787 and allow camera access.
 
 The camera page sends its decisions to `/v1/systemone`. **Two-frame motion** is
-enabled by default to compare an earlier and later frame, with a prompt that looks
-for movement such as mouth/lip changes consistent with talking. It uses a rolling
+enabled by default to compare an earlier and later frame as two independent
+`images`, with their actual source-time spacing in the state prompt. It uses a rolling
 pair spaced at least 250 ms apart. Uncheck it to send one current frame. The mode choice is
 remembered locally, including an existing single-frame opt-out; edited questions
 remain intact. Pausing, schema edits, mode changes, and errors clear the pair.
 Frames older than two seconds are replaced, and a stalled camera cannot supply
-both frames of a clip. Capture waits for newly presented video frames, and the
-frame rate reflects their source timestamps.
+both observations. Capture waits for newly presented video frames; the image
+order is earlier then current. The camera page does not use the `videos` field.
 
 ## Experimental 2×2 history sheet
 
@@ -70,8 +70,9 @@ subtle movement. Speech-specific instructions stay in the separate speaking
 question, which compares lip/jaw shapes and the matching mouth region.
 This is an experiment, not a validated speech
 activity detector. Evaluate both talking and silent clips, including head motion.
-Two independent images have a different visual token budget from the two-frame
-video path; compare input tokens and measured latency rather than assuming it is free.
+Both comparison modes use two independent images. The square sheet can use a
+different token budget from a camera-shaped photo; layout text and extra questions
+also contribute. Compare input tokens and measured latency rather than assuming equal cost.
 Continuous buffering adds browser canvas readback work compared with request-driven capture.
 No extra backend route, dependency, model load, or microphone is required.
 
@@ -121,7 +122,7 @@ WebP images (raw base64 or data URLs, at most 8 MiB encoded per image). Images
 are resized to `CLEF_MAX_SIDE`, like webcam frames. Image URLs and file paths
 are not fetched.
 
-The local video extension accepts one two-frame clip:
+The video API extension accepts one two-frame clip for direct API clients:
 
 ```json
 {

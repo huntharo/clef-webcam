@@ -119,7 +119,7 @@
       <label class="motion-mode"><input id="motion" type="checkbox" checked>Two-frame motion</label>
       <label class="motion-mode"><input id="history" type="checkbox">2×2 history (experimental)</label>
       <span id="history-controls" hidden><button class="crop-button" id="crop">Crop history…</button> <button class="crop-button" id="clear-crop">Full frame</button></span>
-      <span id="mode-hint">Earlier + later · uncheck for one frame</span>
+      <span id="mode-hint">2 images: earlier + later · uncheck for one frame</span>
       <span><kbd>E</kbd> edit &nbsp; <kbd>space</kbd> pause</span>
     </div>
   </footer>
@@ -134,7 +134,7 @@
   <canvas id="canvas" style="display:none"></canvas>
 
 <script type="module">
-import { CaptureState, SYSTEMONE_URL, captureFrame, motionPreference, inferenceTiming, HistoryBuffer, historyQuestions, validCrop, cropPoint, cropRectangle, contactSheet, historyRequest } from "/camera.mjs?history=2";
+import { CaptureState, SYSTEMONE_URL, captureFrame, motionPreference, inferenceTiming, HistoryBuffer, historyQuestions, validCrop, cropPoint, cropRectangle, contactSheet, historyRequest } from "/camera.mjs?history=3";
 // Short instructions and null descriptions keep the prompt small: latency scales with tokens.
 const DEFAULT_QUESTIONS = {
   gesture: {
@@ -191,7 +191,7 @@ function updateMode() {
   $("history-preview").hidden = !historyMode;
   $("sheet-preview").getContext("2d").clearRect(0, 0, 336, 336);
   showCrop();
-  $("mode-hint").textContent = historyMode ? "Buffering −300 / −200 / −100 ms · crop the face for lip detail" : capture.motion ? "Earlier + later · uncheck for one frame" : "One current frame";
+  $("mode-hint").textContent = historyMode ? "Buffering −300 / −200 / −100 ms · optional crop for detail" : capture.motion ? "2 images: earlier + later · uncheck for one frame" : "One current frame";
   recent.length = 0;
   $("dps").textContent = "–";
 }

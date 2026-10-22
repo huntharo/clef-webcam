@@ -83,7 +83,14 @@ try {
  check(requests.at(-1).images.length===1,'saved single-frame opt-out survives history toggle');
  check(!requests.at(-1).questions.speaking_motion,'auto question removed in legacy mode');
  await page.locator('#motion').check();before=requests.length;await wait(()=>requests.length>before);
- check(requests.at(-1).videos?.[0].frames.length===2,'two-frame comparison still works');
+ const pair=requests.at(-1);
+ check(pair.images?.length===2&&!pair.videos,'two-frame comparison uses two independent images');
+ const gap=Number(pair.state.match(/Image 1: -(\d+) ms; image 2: 0 ms\./)?.[1]);
+ check(gap>=250&&gap<=2000,'pair prompt includes actual chronological source spacing');
+ check(Object.keys(pair.questions).length===1&&pair.questions.custom.instructions==='Preserve my saved question','pair keeps the saved schema without adding a history question');
+ const pairDimensions=await page.evaluate(async body=>Promise.all(body.images.map(src=>new Promise(resolve=>{const im=new Image();im.onload=()=>resolve([im.width,im.height]);im.src=src;}))),pair);
+ check(pairDimensions.every(([w,h])=>w===448&&h===252),'pair contains two full camera photographs');
+ await fs.writeFile(path.join(artifacts,'pair-fixture-request.json'),JSON.stringify(pair));
  await page.locator('#history').check();before=requests.length;await wait(()=>requests.length>before);
  failNext=true;await page.waitForTimeout(1800);before=requests.length;await wait(()=>requests.length>before);
  check(requests.at(-1).images.length===2,'history recovers after request error');
