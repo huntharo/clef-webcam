@@ -75,11 +75,11 @@ export function inferenceTiming(header) {
 
 export const SPEAKING_MOTION = {
   type: "choice",
-  instructions: "Is there visible speech-like lip or jaw articulation across the timestamped history panels and current photo? Judge mouth changes, not earbuds, hand gestures, head movement or an open mouth alone. Use uncertain when the mouth is too small, obscured, or the evidence is ambiguous.",
+  instructions: "Compare lip/jaw shapes in the photos and the matching mouth region in the difference map. Ignore unrelated motion and an open mouth alone. Choose uncertain if the mouth or temporal evidence is unclear.",
   criteria: {
-    speaking_motion: "Visible lip or jaw articulation changes consistent with speaking.",
-    no_speaking_motion: "Mouth visible without speech-like articulation changes.",
-    uncertain: "Mouth not sufficiently visible or motion cannot be identified."
+    speaking_motion: "Visible speech-like lip/jaw changes.",
+    no_speaking_motion: "Visible mouth without speech-like changes.",
+    uncertain: "Mouth or temporal evidence unclear."
   }
 };
 
@@ -179,7 +179,7 @@ export function historyQuestions(questions) {
 export function historyRequest(snapshot, questions, current, sheet, cropped) {
   return {
     model: "clef-flash", images: [current, sheet],
-    state: `Image 1 is the current full webcam photo (0 ms). Image 2 is a 2x2 diagnostic contact sheet, not a second scene or a video frame. Read top-left, top-right, bottom-left as chronological ${cropped ? "cropped" : "full-scene"} camera history at ${snapshot.offsets.join(", ")} ms relative to image 1. Bottom-right is a motion map over ${snapshot.samples.length} source frames from ${snapshot.offsets[0]} to 0 ms: black means no detected change, brighter means more adjacent-frame RGB change. This map is not a person or a natural photograph and does not encode direction or prove speech. For talking, require visible lip/jaw articulation across the natural panels; head motion, lighting, gestures and earbuds are not evidence of speech. Use uncertain when the mouth is too small or unclear.`,
+    state: `Image 1: current full webcam photo (0 ms). Image 2: 2x2 sheet. Top-left, top-right, bottom-left: chronological ${cropped ? "cropped" : "full-scene"} camera history at ${snapshot.offsets.join(", ")} ms. Bottom-right: motion-difference map over ${snapshot.samples.length} source frames from ${snapshot.offsets[0]} to 0 ms. All tiles share crop, scale and alignment: locate the relevant object/body part in the photos, then inspect its matching map region. Bright=adjacent-frame RGB change above noise floor; black can miss subtle motion. The map is not a photo or video frame and does not encode direction or identify an action. Use photos plus map for all motion questions.`,
     questions: historyQuestions(questions)
   };
 }

@@ -54,7 +54,7 @@ its original position can appear even when selected history pictures look alike.
 It indicates change, not direction or speech: camera movement, lighting, sensor
 noise and other motion can also appear.
 
-Select **Crop history…** and drag over the face or mouth in the mirrored preview.
+Select **Crop history…** and drag over the object or body part of interest in the mirrored preview.
 The same crop applies to every history tile and the motion map; **Full frame**
 clears it. Images retain their aspect ratio with letterboxing. Open **History
 sheet preview** to see exactly what the second image contains. Crop and mode
@@ -63,8 +63,12 @@ preferences stay in localStorage, and saved questions are preserved.
 History mode adds a separate `speaking_motion` question with speaking,
 no-speaking-motion and uncertain choices, unless that question already exists or the schema already has 64 questions.
 The added question is not written into saved schemas or used in other modes.
-The layout prompt requires visual lip/jaw articulation and explains that the
-motion map is not another scene. This is an experiment, not a validated speech
+The layout prompt covers general motion: locate the object or body part in the
+three photos and inspect the same region in the spatially aligned difference map.
+Bright pixels indicate change, not an identified action; black pixels can miss
+subtle movement. Speech-specific instructions stay in the separate speaking
+question, which compares lip/jaw shapes and the matching mouth region.
+This is an experiment, not a validated speech
 activity detector. Evaluate both talking and silent clips, including head motion.
 Two independent images have a different visual token budget from the two-frame
 video path; compare input tokens and measured latency rather than assuming it is free.
