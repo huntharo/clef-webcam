@@ -80,6 +80,13 @@
   .controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .motion-mode { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); cursor: pointer; }
   .motion-mode input { accent-color: var(--orange); }
+  .history-preview { position: fixed; right: 48px; bottom: 70px; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: 12px var(--mono); }
+  .history-preview summary { cursor: pointer; color: var(--orange); }
+  .history-preview canvas { display: block; margin-top: 8px; width: 336px; height: 336px; }
+  .crop-guide { position: absolute; border: 2px dashed var(--orange); pointer-events: none; }
+  .crop-button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+  .cam.selecting { cursor: crosshair; touch-action: none; }
+  [hidden] { display: none !important; }
   #mode-hint { color: var(--muted); font-size: 12px; }
 </style>
 </head>
@@ -97,9 +104,10 @@
   </header>
 
   <main>
-    <div class="cam">
+    <div class="cam" id="camera-view">
       <video id="video" autoplay playsinline muted></video>
       <div class="pulse" id="pulse"></div>
+      <div class="crop-guide" id="crop-guide" hidden></div>
       <div class="tag" id="tag">no text generation · one forward pass · on-device</div>
     </div>
     <div class="cards" id="cards"></div>
@@ -109,7 +117,9 @@
     <div><b id="hardware">loading model…</b> · System One API</div>
     <div class="controls">
       <label class="motion-mode"><input id="motion" type="checkbox" checked>Two-frame motion</label>
-      <span id="mode-hint">Earlier + later · uncheck for one frame</span>
+      <label class="motion-mode"><input id="history" type="checkbox">2×2 history (experimental)</label>
+      <span id="history-controls" hidden><button class="crop-button" id="crop">Crop history…</button> <button class="crop-button" id="clear-crop">Full frame</button></span>
+      <span id="mode-hint">2 images: earlier + later · uncheck for one frame</span>
       <span><kbd>E</kbd> edit &nbsp; <kbd>space</kbd> pause</span>
     </div>
   </footer>
@@ -120,10 +130,11 @@
     <div class="row"><span><kbd>⌘</kbd>+<kbd>enter</kbd> apply · <kbd>esc</kbd> close</span><button id="apply">apply</button></div>
   </div>
 
+  <details id="history-preview" class="history-preview" hidden><summary>History sheet preview</summary><canvas id="sheet-preview" width="336" height="336"></canvas></details>
   <canvas id="canvas" style="display:none"></canvas>
 
 <script type="module">
-import { CaptureState, SYSTEMONE_URL, captureFrame, motionPreference, inferenceTiming } from "/camera.mjs";
+import { CaptureState, SYSTEMONE_URL, captureFrame, motionPreference, inferenceTiming, HistoryBuffer, historyQuestions, validCrop, cropPoint, cropRectangle, contactSheet, historyRequest } from "/camera.mjs?history=3";
 // Short instructions and null descriptions keep the prompt small: latency scales with tokens.
 const DEFAULT_QUESTIONS = {
   gesture: {
@@ -151,19 +162,80 @@ let paused = false;
 const recent = [];
 const capture = new CaptureState(motionPreference(localStorage.getItem("clef-motion")));
 $("motion").checked = capture.motion;
+const history = new HistoryBuffer();
+const historyCanvas = document.createElement("canvas"), historyContext = historyCanvas.getContext("2d", { willReadFrequently: true });
+let historyMode = new URLSearchParams(location.search).get("mode") === "history" || localStorage.getItem("clef-history") === "true";
+let crop = null, selectingCrop = false, cropStart = null, lastHistorySent = null;
+try { const stored = JSON.parse(localStorage.getItem("clef-history-crop")); if (validCrop(stored)) crop = stored; } catch {}
+$("history").checked = historyMode;
+function resetCapture() { capture.reset(); history.reset(); lastHistorySent = null; }
+function activeQuestions() {
+  return historyMode ? historyQuestions(questions) : questions;
+}
+function showCrop(value = crop) {
+  const guide = $("crop-guide"), box = $("camera-view").getBoundingClientRect();
+  guide.hidden = !historyMode || !value || !video.videoWidth;
+  if (guide.hidden) return;
+  const scale = Math.max(box.width / video.videoWidth, box.height / video.videoHeight);
+  const w = video.videoWidth * scale, h = video.videoHeight * scale;
+  Object.assign(guide.style, { left: `${(box.width-w)/2+value.x*w}px`, top: `${(box.height-h)/2+value.y*h}px`, width: `${value.w*w}px`, height: `${value.h*h}px` });
+}
+function point(event) {
+  const box = $("camera-view").getBoundingClientRect();
+  return cropPoint(event.clientX-box.left, event.clientY-box.top, box.width, box.height, video.videoWidth, video.videoHeight);
+}
 
 function updateMode() {
-  $("mode-hint").textContent = capture.motion ? "Earlier + later · uncheck for one frame" : "One current frame";
+  $("motion").disabled = historyMode;
+  $("history-controls").hidden = !historyMode;
+  $("history-preview").hidden = !historyMode;
+  $("sheet-preview").getContext("2d").clearRect(0, 0, 336, 336);
+  showCrop();
+  $("mode-hint").textContent = historyMode ? "Buffering −300 / −200 / −100 ms · optional crop for detail" : capture.motion ? "2 images: earlier + later · uncheck for one frame" : "One current frame";
   recent.length = 0;
   $("dps").textContent = "–";
 }
 updateMode();
 $("motion").onchange = () => {
   capture.setMotion($("motion").checked);
+  history.reset();
   localStorage.setItem("clef-motion", String(capture.motion));
   updateMode();
 };
 
+$("history").onchange = () => {
+  historyMode = $("history").checked;
+  localStorage.setItem("clef-history", String(historyMode));
+  selectingCrop = false; cropStart = null; $("camera-view").classList.remove("selecting");
+  resetCapture(); updateMode(); renderCards();
+};
+$("crop").onclick = () => {
+  selectingCrop = !selectingCrop;
+  $("camera-view").classList.toggle("selecting", selectingCrop);
+  $("tag").textContent = selectingCrop ? "Drag over the face or mouth to crop the history panels" : TAG;
+};
+$("clear-crop").onclick = () => {
+  crop = null; localStorage.removeItem("clef-history-crop");
+  resetCapture(); updateMode();
+};
+$("camera-view").onpointerdown = event => {
+  if (!historyMode || !selectingCrop || !video.videoWidth) return;
+  event.preventDefault(); cropStart = point(event);
+  $("camera-view").setPointerCapture(event.pointerId);
+};
+$("camera-view").onpointermove = event => {
+  if (cropStart) showCrop(cropRectangle(cropStart, point(event)));
+};
+$("camera-view").onpointerup = event => {
+  if (!cropStart) return;
+  const next = cropRectangle(cropStart, point(event)); cropStart = null;
+  if (next) { crop = next; localStorage.setItem("clef-history-crop", JSON.stringify(crop)); resetCapture(); }
+  selectingCrop = false; $("camera-view").classList.remove("selecting");
+  $("tag").textContent = TAG; updateMode();
+};
+$("camera-view").onpointercancel = () => { cropStart = null; selectingCrop = false; $("camera-view").classList.remove("selecting"); showCrop(); };
+window.addEventListener("resize", () => showCrop());
+video.addEventListener("resize", () => { resetCapture(); showCrop(); });
 $("schema").value = JSON.stringify(questions, null, 2);
 
 const pretty = s => String(s).replace(/_/g, " ");
@@ -184,7 +256,7 @@ function optionsOf(q) {
 function renderCards() {
   const cards = $("cards");
   cards.replaceChildren();
-  for (const [id, q] of Object.entries(questions)) {
+  for (const [id, q] of Object.entries(activeQuestions())) {
     const card = el("div", "card");
     card.dataset.id = id;
     const head = el("div", "q");
@@ -206,7 +278,7 @@ function update(answers) {
   for (const [id, a] of Object.entries(answers)) {
     const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
     if (!card) continue;
-    const q = questions[id];
+    const q = activeQuestions()[id];
     let probs, top, answerText, yes = false;
     if (a.type === "noul") {
       probs = { true: a.noul, false: 1 - a.noul };
@@ -248,18 +320,54 @@ function setStatus(text, live) {
   $("dot").classList.toggle("live", !!live);
 }
 
+async function historyLoop() {
+  while (true) {
+    if (!historyMode || paused || !video.videoWidth) { await new Promise(r => setTimeout(r, 50)); continue; }
+    const generation = capture.generation;
+    try {
+      const sample = await captureFrame(video, () => {
+        historyCanvas.width = 640;
+        historyCanvas.height = Math.round(640 * video.videoHeight / video.videoWidth);
+        // Bound portrait sources as well as landscape ones.
+        if (historyCanvas.height > 640) { historyCanvas.width = Math.round(640 * video.videoWidth / video.videoHeight); historyCanvas.height = 640; }
+        historyContext.save(); historyContext.translate(historyCanvas.width, 0); historyContext.scale(-1, 1);
+        historyContext.drawImage(video, 0, 0, historyCanvas.width, historyCanvas.height); historyContext.restore();
+        return { width: historyCanvas.width, height: historyCanvas.height,
+          pixels: historyContext.getImageData(0, 0, historyCanvas.width, historyCanvas.height).data };
+      });
+      if (generation !== capture.generation || paused || !historyMode) continue;
+      if (sample) history.push({ ...sample.data, at: sample.at, mediaTime: sample.mediaTime });
+      else resetCapture();
+    } catch (error) {
+      resetCapture(); setStatus("camera error", false);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
+
 async function loop() {
   while (true) {
     if (paused || !video.videoWidth) { await new Promise(r => setTimeout(r, 100)); continue; }
     const generation = capture.generation;
     try {
-      const wait = capture.waitMs(performance.now());
-      if (wait) { setStatus("sampling", false); await new Promise(r => setTimeout(r, wait)); continue; }
-      const frame = await grab();
-      if (generation !== capture.generation || paused) continue;
-      if (!frame) { capture.reset(); setStatus("sampling", false); continue; }
-      const body = capture.prepare(frame, questions);
-      if (!body) { setStatus("sampling", false); await new Promise(r => setTimeout(r, 250)); continue; }
+      let body;
+      if (historyMode) {
+        const snapshot = history.snapshot(performance.now());
+        if (!snapshot || snapshot.current.mediaTime === lastHistorySent) { setStatus("sampling", false); await new Promise(r => setTimeout(r, 35)); continue; }
+        const images = contactSheet(snapshot, crop || undefined);
+        lastHistorySent = snapshot.current.mediaTime;
+        body = historyRequest(snapshot, questions, images.current, images.sheet, !!crop);
+        $("sheet-preview").getContext("2d").drawImage(images.canvas, 0, 0);
+        $("mode-hint").textContent = `${snapshot.offsets.join(" / ")} ms · ${snapshot.samples.length} source frames · ${crop ? "cropped" : "full frame"}`;
+      } else {
+        const wait = capture.waitMs(performance.now());
+        if (wait) { setStatus("sampling", false); await new Promise(r => setTimeout(r, wait)); continue; }
+        const frame = await grab();
+        if (generation !== capture.generation || paused) continue;
+        if (!frame) { resetCapture(); setStatus("sampling", false); continue; }
+        body = capture.prepare(frame, questions);
+        if (!body) { setStatus("sampling", false); await new Promise(r => setTimeout(r, 250)); continue; }
+      }
       const started = performance.now();
       const res = await fetch(SYSTEMONE_URL, {
         method: "POST",
@@ -280,11 +388,11 @@ async function loop() {
       if (recent.length > 1) $("dps").textContent = ((recent.length - 1) / ((now - recent[0]) / 1000)).toFixed(1);
       $("pulse").classList.add("on");
       requestAnimationFrame(() => $("pulse").classList.remove("on"));
-      $("tag").textContent = TAG;
+      $("tag").textContent = selectingCrop ? "Drag over the face or mouth to crop the history panels" : TAG;
       setStatus("live", true);
     } catch (e) {
       if (generation !== capture.generation || paused) continue;
-      capture.reset();
+      resetCapture();
       setStatus("error", false);
       $("tag").textContent = `${e.message} · press E to fix, shift+R to reset`;
       await new Promise(r => setTimeout(r, 1000));
@@ -297,7 +405,7 @@ function applySchema() {
     const next = JSON.parse($("schema").value);
     if (!next || typeof next !== "object" || !Object.keys(next).length) throw new Error("need at least one question");
     questions = next;
-    capture.reset();
+    resetCapture();
     localStorage.setItem("clef-questions", JSON.stringify(questions));
     $("err").textContent = "";
     $("editor").classList.remove("open");
@@ -308,7 +416,7 @@ function applySchema() {
 }
 
 document.addEventListener("keydown", e => {
-  if (e.target instanceof HTMLInputElement) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLButtonElement || e.target.closest("summary")) return;
   const editing = $("editor").classList.contains("open");
   if (editing) {
     if (e.key === "Escape") $("editor").classList.remove("open");
@@ -316,11 +424,11 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (e.key.toLowerCase() === "e" && !e.metaKey && !e.ctrlKey) { $("editor").classList.add("open"); $("schema").focus(); e.preventDefault(); }
-  if (e.key === " ") { paused = !paused; capture.reset(); setStatus(paused ? "paused" : "live", !paused); e.preventDefault(); }
+  if (e.key === " ") { paused = !paused; resetCapture(); setStatus(paused ? "paused" : "live", !paused); e.preventDefault(); }
   if (e.key.toLowerCase() === "r" && e.shiftKey) {
     localStorage.removeItem("clef-questions");
     questions = DEFAULT_QUESTIONS;
-    capture.reset();
+    resetCapture();
     $("schema").value = JSON.stringify(questions, null, 2);
     renderCards();
   }
@@ -329,7 +437,7 @@ $("apply").onclick = applySchema;
 
 renderCards();
 navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
-  .then(stream => { video.srcObject = stream; setStatus("warming", false); loop(); })
+  .then(stream => { video.srcObject = stream; setStatus("warming", false); showCrop(); historyLoop(); loop(); })
   .catch(e => setStatus("no camera", false));
 </script>
 </body>

@@ -3,3 +3,5 @@ __pycache__/
 models/
 *.log
 .DS_Store
+node_modules/
+.history-test-artifacts/
